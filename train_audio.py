@@ -12,15 +12,12 @@ import torch.nn as nn
 
 
 def mkdir(path):
-    folder = os.path.exists(path)
-
-    if not folder:  # 判断是否存在文件夹如果不存在则创建为文件夹
-        os.makedirs(path)  # makedirs 创建文件时如果路径不存在会创建这个路径
-        print("---  Creating %s...  ---" % path)
-        print("---  OK  ---")
-
+    if folder := os.path.exists(path):
+        print(f"---  {path} already exists!  ---")
     else:
-        print("---  %s already exists!  ---" % path)
+        os.makedirs(path)  # makedirs 创建文件时如果路径不存在会创建这个路径
+        print(f"---  Creating {path}...  ---")
+        print("---  OK  ---")
 
 
 
@@ -54,14 +51,10 @@ if __name__ == "__main__":
 
     dataloader = MultiAudio(args.data_path, batch_size=args.batch_size, num_workers=8)
 
-    if args.multigpu:
-        device = 'cuda:0'
-    else:
-        device = args.device
-
+    device = 'cuda:0' if args.multigpu else args.device
     experimentName = args.experiment_name
     save_dir = os.path.join(args.save_dir, experimentName)
-    mkdir("logs/" + experimentName)
+    mkdir(f"logs/{experimentName}")
     mkdir(save_dir)
     G = Generator(hparams.dim_neck, hparams.speaker_embedding_size, 512, hparams.freq, lr=1e-3, is_train=True,
                   loss_content=args.loss_content,

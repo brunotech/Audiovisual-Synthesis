@@ -77,7 +77,7 @@ if __name__ == '__main__':
         if newkey not in G.state_dict():
             #print(newkey)
             newdict.pop(newkey)
-    print("Load " + str(len(newdict)) + " parameters!")
+    print(f"Load {len(newdict)} parameters!")
     G.load_state_dict(newdict, strict=False)
     print("Done.")
 

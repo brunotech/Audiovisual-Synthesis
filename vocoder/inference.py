@@ -7,7 +7,7 @@ _model = None   # type: WaveRNN
 
 def load_model(weights_fpath, verbose=True):
     global _model
-    
+
     if verbose:
         print("Building Wave-RNN")
     _model = WaveRNN(
@@ -24,9 +24,9 @@ def load_model(weights_fpath, verbose=True):
         sample_rate=hp.sample_rate,
         mode=hp.voc_mode
     ).cuda()
-    
+
     if verbose:
-        print("Loading model weights at %s" % weights_fpath)
+        print(f"Loading model weights at {weights_fpath}")
     checkpoint = torch.load(weights_fpath)
     _model.load_state_dict(checkpoint['model_state'])
     _model.eval()
@@ -50,9 +50,10 @@ def infer_waveform(mel, normalize=True,  batched=True, target=8000, overlap=800,
     """
     if _model is None:
         raise Exception("Please load Wave-RNN in memory before using it")
-    
+
     if normalize:
         mel = mel / hp.mel_max_abs_value
     mel = torch.from_numpy(mel[None, ...])
-    wav = _model.generate(mel, batched, target, overlap, hp.mu_law, progress_callback)
-    return wav
+    return _model.generate(
+        mel, batched, target, overlap, hp.mu_law, progress_callback
+    )

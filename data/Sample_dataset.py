@@ -81,20 +81,18 @@ class SampleVideoDataset(data.Dataset):
     def __init__(self, video_path, speaker_id=0, speaker_nums=2, sample_frames=128, length=-1, ret_wav=False, use_256=False):
         super(SampleVideoDataset, self).__init__()
         data_path, video_name = os.path.split(video_path)
-        folder_path = data_path + '/' + video_name.split('.')[0] + '/'
-        folder = os.path.exists(folder_path)
+        folder_path = f'{data_path}/' + video_name.split('.')[0] + '/'
+        if folder := os.path.exists(folder_path):
+            print(f"---  {folder_path} already exists!  ---")
 
-        if not folder:  
-            print("---  Creating %s...  ---" % folder_path)
-            os.makedirs(folder_path)  
+        else:
+            print(f"---  Creating {folder_path}...  ---")
+            os.makedirs(folder_path)
             reader = imageio.get_reader(video_path, 'ffmpeg', fps=20)
             for i, im in enumerate(reader):
                 imageio.imwrite(folder_path + str(i).zfill(5) + '.jpg', im)
             print("---  OK  ---")
-        else:
-            print("---  %s already exists!  ---" % folder_path)
-
-        self.list_frame = glob.glob(folder_path + '*.jpg')
+        self.list_frame = glob.glob(f'{folder_path}*.jpg')
         self.list_frame.sort()
         print("--- Totally %d video frames ---" % len(self.list_frame))
 

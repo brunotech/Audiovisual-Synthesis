@@ -94,8 +94,7 @@ def inv_mel_spectrogram(mel_spectrogram):
 
     processor = _lws_processor()
     D = processor.run_lws(S.astype(np.float64).T ** 1.5)
-    y = processor.istft(D).astype(np.float32)
-    return y
+    return processor.istft(D).astype(np.float32)
 
 
 def _lws_processor():
@@ -121,10 +120,9 @@ def encode_mu_law(x, mu) :
     return np.floor((fx + 1) / 2 * mu + 0.5)
 
 
-def decode_mu_law(y, mu, from_labels=True) :
+def decode_mu_law(y, mu, from_labels=True):
     if from_labels: 
         y = label_2_float(y, math.log2(mu))
     mu = mu - 1
-    x = np.sign(y) / mu * ((1 + mu) ** np.abs(y) - 1)
-    return x
+    return np.sign(y) / mu * ((1 + mu) ** np.abs(y) - 1)
 

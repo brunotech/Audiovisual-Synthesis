@@ -11,7 +11,7 @@ class MyUpsample(Module):
         super(MyUpsample, self).__init__()
         self.name = type(self).__name__
         self.size = size
-        self.scale_factor = scale_factor if scale_factor else None
+        self.scale_factor = scale_factor or None
         self.mode = mode
         self.align_corners = align_corners
 
@@ -20,10 +20,10 @@ class MyUpsample(Module):
 
     def extra_repr(self):
         if self.scale_factor is not None:
-            info = 'scale_factor=' + str(self.scale_factor)
+            info = f'scale_factor={str(self.scale_factor)}'
         else:
-            info = 'size=' + str(self.size)
-        info += ', mode=' + self.mode
+            info = f'size={str(self.size)}'
+        info += f', mode={self.mode}'
         return info
 
 
@@ -79,13 +79,11 @@ class VideoGenerator(nn.Module):
             x = F.relu(self.deconv6_bn(self.deconv6(x)))
         x = torch.tanh(self.deconv7(x))
         x = x.reshape(batch_sz, num_frames, x.shape[1], x.shape[2], x.shape[3])
-        if return_feature:
-            return x, input
-        return x
+        return (x, input) if return_feature else x
 
 
 def normal_init(m, mean, std):
-    if isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Conv2d):
+    if isinstance(m, (nn.ConvTranspose2d, nn.Conv2d)):
         m.weight.data.normal_(mean, std)
         m.bias.data.zero_()
         
@@ -101,14 +99,14 @@ def conv3d(in_planes, out_planes, stride=1):
 
 # Upsale the spatial size by a factor of 2
 def upBlock(in_planes, out_planes):
-    block = nn.Sequential(
+    return nn.Sequential(
         # nn.Upsample(scale_factor=2, mode='nearest'),
         # conv3x3(in_planes, out_planes),
-        MyUpsample(scale_factor=(1,2,2), mode='nearest'),
+        MyUpsample(scale_factor=(1, 2, 2), mode='nearest'),
         conv3d(in_planes, out_planes),
         nn.BatchNorm3d(out_planes),
-        nn.ReLU(True))
-    return block
+        nn.ReLU(True),
+    )
 
 class ResBlock(nn.Module):
     def __init__(self, channel_num):
@@ -139,9 +137,7 @@ class STAGE2_G(nn.Module):
         self.residual_video = residual
 
     def _make_layer(self, block, channel_num):
-        layers = []
-        for i in range(4):
-            layers.append(block(channel_num))
+        layers = [block(channel_num) for _ in range(4)]
         return nn.Sequential(*layers)
 
     def define_module(self):
@@ -198,9 +194,7 @@ class STAGE2_G(nn.Module):
         if self.residual_video:
             stage2_video = MyUpsample(scale_factor=(1,4,4), mode='nearest')(stage1_video) + stage2_video
 
-        if train:
-            return stage1_video, stage2_video
-        return stage2_video
+        return (stage1_video, stage2_video) if train else stage2_video
 
 
 class VideoEncoder(nn.Module):

@@ -29,13 +29,13 @@ if __name__ == "__main__":
     device = 'cuda:0'
 
     load_model = args.load_model
-    
+
     G = VideoAudioGenerator(hparams.dim_neck, hparams.speaker_embedding_size, 512, hparams.freq, lr=1e-3, is_train=False, 
                   multigpu=args.multigpu,
                   residual=args.residual,
                   use_256=args.use_256).to(device)
-    
-    print("Loading from %s..." % load_model)
+
+    print(f"Loading from {load_model}...")
     # self.load_state_dict(torch.load(load_model))
     d = torch.load(load_model)
     newdict = d.copy()
@@ -81,6 +81,6 @@ if __name__ == "__main__":
     else:
         # s2t_wav = inv_preemphasis(G.vocoder.generate(mel_outputs_postnet.transpose(1, 2), True, 8000, 800, mu_law=True), hparams.preemphasis, hparams.preemphasize)
         s2t_wav = inv_preemphasis(G.vocoder.generate(mel_outputs_postnet.transpose(1, 2), False, None, None, mu_law=True), hparams.preemphasis, hparams.preemphasize)
-    
+
     librosa.output.write_wav("tmp/tmp.wav", s2t_wav.astype(np.float32), hparams.sample_rate)
     os.system(f"ffmpeg -i  tmp/tmp.gif -pix_fmt yuv420p tmp/tmp.mp4 -y; ffmpeg -i tmp/tmp.mp4 -i tmp/tmp.wav -c:v copy -c:a aac -strict experimental {args.output_file} -y")

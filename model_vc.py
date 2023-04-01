@@ -54,8 +54,7 @@ class ConvNorm(torch.nn.Module):
             self.conv.weight, gain=torch.nn.init.calculate_gain(w_init_gain))
 
     def forward(self, signal):
-        conv_signal = self.conv(signal)
-        return conv_signal
+        return self.conv(signal)
 
 class MyEncoder(nn.Module):
     '''Encoder without speaker embedding'''
@@ -92,14 +91,14 @@ class MyEncoder(nn.Module):
         out_forward = outputs[:, :, :self.dim_neck]
         out_backward = outputs[:, :, self.dim_neck:]
 
-        # print(outputs.shape)
-
-        codes = []
-        for i in range(0, outputs.size(1), self.freq):
-            codes.append(torch.cat((out_forward[:, i + self.freq - 1, :], out_backward[:, i, :]), dim=-1))
-        if return_unsample:
-            return codes, outputs
-        return codes
+        codes = [
+            torch.cat(
+                (out_forward[:, i + self.freq - 1, :], out_backward[:, i, :]),
+                dim=-1,
+            )
+            for i in range(0, outputs.size(1), self.freq)
+        ]
+        return (codes, outputs) if return_unsample else codes
 
 
 class Decoder(nn.Module):
@@ -107,11 +106,11 @@ class Decoder(nn.Module):
     """
     def __init__(self, dim_neck, dim_emb, dim_pre, num_mel=80):
         super(Decoder, self).__init__()
-        
+
         self.lstm1 = nn.LSTM(dim_neck*2+dim_emb, dim_pre, 1, batch_first=True)
-        
+
         convolutions = []
-        for i in range(3):
+        for _ in range(3):
             conv_layer = nn.Sequential(
                 ConvNorm(dim_pre,
                          dim_pre,
@@ -121,9 +120,9 @@ class Decoder(nn.Module):
                 nn.BatchNorm1d(dim_pre))
             convolutions.append(conv_layer)
         self.convolutions = nn.ModuleList(convolutions)
-        
+
         self.lstm2 = nn.LSTM(dim_pre, 1024, 2, batch_first=True)
-        
+
         self.linear_projection = LinearNorm(1024, num_mel)
 
     def forward(self, x):
@@ -131,16 +130,14 @@ class Decoder(nn.Module):
         #self.lstm1.flatten_parameters()
         x, _ = self.lstm1(x)
         x = x.transpose(1, 2)
-        
+
         for conv in self.convolutions:
             x = F.relu(conv(x))
         x = x.transpose(1, 2)
-        
-        outputs, _ = self.lstm2(x)
-        
-        decoder_output = self.linear_projection(outputs)
 
-        return decoder_output   
+        outputs, _ = self.lstm2(x)
+
+        return self.linear_projection(outputs)   
 
     
 class Postnet(nn.Module):
@@ -161,7 +158,7 @@ class Postnet(nn.Module):
                 nn.BatchNorm1d(512))
         )
 
-        for i in range(1, 5 - 1):
+        for _ in range(1, 5 - 1):
             self.convolutions.append(
                 nn.Sequential(
                     ConvNorm(512,
@@ -203,10 +200,7 @@ class GANLoss(nn.Module):
         self.real_label_var = None
         self.fake_label_var = None
         self.Tensor = tensor
-        if use_lsgan:
-            self.loss = nn.MSELoss()
-        else:
-            self.loss = nn.BCELoss()
+        self.loss = nn.MSELoss() if use_lsgan else nn.BCELoss()
 
     def get_target_tensor(self, input, target_is_real):
         target_tensor = None
@@ -216,15 +210,14 @@ class GANLoss(nn.Module):
             if create_label:
                 real_tensor = self.Tensor(input.size()).fill_(self.real_label)
                 self.real_label_var = Variable(real_tensor, requires_grad=False)
-            target_tensor = self.real_label_var
+            return self.real_label_var
         else:
             create_label = ((self.fake_label_var is None) or
                             (self.fake_label_var.numel() != input.numel()))
             if create_label:
                 fake_tensor = self.Tensor(input.size()).fill_(self.fake_label)
                 self.fake_label_var = Variable(fake_tensor, requires_grad=False)
-            target_tensor = self.fake_label_var
-        return target_tensor
+            return self.fake_label_var
 
     def __call__(self, input, target_is_real):
         target_tensor = self.get_target_tensor(input, target_is_real)
@@ -237,21 +230,20 @@ def pad_layer(inp, layer, is_2d=False):
     else:
         kernel_size = layer.kernel_size
     if not is_2d:
-        if kernel_size % 2 == 0:
-            pad = (kernel_size//2, kernel_size//2 - 1)
-        else:
-            pad = (kernel_size//2, kernel_size//2)
+        pad = (
+            (kernel_size // 2, kernel_size // 2 - 1)
+            if kernel_size % 2 == 0
+            else (kernel_size // 2, kernel_size // 2)
+        )
+    elif kernel_size % 2 == 0:
+        pad = (kernel_size//2, kernel_size//2 - 1, kernel_size//2, kernel_size//2 - 1)
     else:
-        if kernel_size % 2 == 0:
-            pad = (kernel_size//2, kernel_size//2 - 1, kernel_size//2, kernel_size//2 - 1)
-        else:
-            pad = (kernel_size//2, kernel_size//2, kernel_size//2, kernel_size//2)
+        pad = (kernel_size//2, kernel_size//2, kernel_size//2, kernel_size//2)
     # padding
     inp = F.pad(inp,
             pad=pad,
             mode='reflect')
-    out = layer(inp)
-    return out
+    return layer(inp)
 
 
 class PatchDiscriminator(nn.Module):
@@ -294,15 +286,7 @@ class PatchDiscriminator(nn.Module):
         # GAN output value
         val = pad_layer(out, self.conv6, is_2d=True)
         val = val.view(val.size(0), -1)
-        mean_val = torch.mean(val, dim=1)
-        # if classify:
-        #     # classify
-        #     logits = self.conv_classify(out)
-        #     print(logits.size())
-        #     logits = logits.view(logits.size(0), -1)
-        #     return mean_val, logits
-        # else:
-        return mean_val
+        return torch.mean(val, dim=1)
 
 
 class Generator(nn.Module):
@@ -429,16 +413,24 @@ class Generator(nn.Module):
 
     def conversion(self, speaker_org, speaker_trg, spec, device, speed=1):
         speaker_org, speaker_trg, spec = speaker_org.to(device), speaker_trg.to(device), spec.to(device)
-        if not self.multigpu:
-            codes = self.encoder(spec, speaker_org)
-        else:
-            codes = self.encoder.module(spec, speaker_org)
-        tmp = []
-        for code in codes:
-            tmp.append(code.unsqueeze(1).expand(-1, int(speed * spec.size(1) / len(codes)), -1))
+        codes = (
+            self.encoder.module(spec, speaker_org)
+            if self.multigpu
+            else self.encoder(spec, speaker_org)
+        )
+        tmp = [
+            code.unsqueeze(1).expand(
+                -1, int(speed * spec.size(1) / len(codes)), -1
+            )
+            for code in codes
+        ]
         code_exp = torch.cat(tmp, dim=1)
         encoder_outputs = torch.cat((code_exp, speaker_trg.unsqueeze(1).expand(-1, code_exp.size(1), -1)), dim=-1)
-        mel_outputs = self.decoder(code_exp) if not self.multigpu else self.decoder.module(code_exp)
+        mel_outputs = (
+            self.decoder.module(code_exp)
+            if self.multigpu
+            else self.decoder(code_exp)
+        )
 
         mel_outputs_postnet = self.postnet(mel_outputs.transpose(2, 1))
         mel_outputs_postnet = mel_outputs + mel_outputs_postnet.transpose(2, 1)
@@ -446,9 +438,9 @@ class Generator(nn.Module):
 
     def optimize_parameters(self, dataloader, epochs, device, display_freq=10, save_freq=1000, save_dir="./",
                             experimentName="Train", load_model=None, initial_niter=0):
-        writer = SummaryWriter(log_dir="logs/"+experimentName)
+        writer = SummaryWriter(log_dir=f"logs/{experimentName}")
         if load_model is not None:
-            print("Loading from %s..." % load_model)
+            print(f"Loading from {load_model}...")
             # self.load_state_dict(torch.load(load_model))
             d = torch.load(load_model)
             newdict = d.copy()
@@ -470,7 +462,7 @@ class Generator(nn.Module):
             for i, data in enumerate(dataloader):
                 speaker_org, spec, prev, wav = data
                 loss_dict, loss_dict_discriminator, loss_dict_wavenet = \
-                    self.train_step(spec.to(device), speaker_org.to(device), prev=prev.to(device), wav=wav.to(device), device=device)
+                        self.train_step(spec.to(device), speaker_org.to(device), prev=prev.to(device), wav=wav.to(device), device=device)
                 if niter % display_freq == 0:
                     print("Epoch[%d] Iter[%d] Niter[%d] %s %s %s"
                           % (epoch, i, niter, loss_dict, loss_dict_discriminator, loss_dict_wavenet))
@@ -482,8 +474,10 @@ class Generator(nn.Module):
                         writer.add_scalars('data/wavenet', loss_dict_wavenet, niter)
                 if niter % save_freq == 0:
                     print("Saving and Testing...", end='\t')
-                    torch.save(self.state_dict(), save_dir + '/Epoch' + str(epoch).zfill(3) + '_Iter'
-                               + str(niter).zfill(8) + ".pkl")
+                    torch.save(
+                        self.state_dict(),
+                        f'{save_dir}/Epoch{str(epoch).zfill(3)}_Iter{str(niter).zfill(8)}.pkl',
+                    )
                     # self.load_state_dict(torch.load('params.pkl'))
                     if len(dataloader) >= 2:
                         wav_dic, sr = self.test_fixed(device)
@@ -501,10 +495,10 @@ class Generator(nn.Module):
         codes = self.encoder(x, c_org)
         # print(codes[0].shape)
         content = torch.cat([code.unsqueeze(1) for code in codes], dim=1)
-        # print("content shape", content.shape)
-        tmp = []
-        for code in codes:
-            tmp.append(code.unsqueeze(1).expand(-1, int(x.size(1) / len(codes)), -1))
+        tmp = [
+            code.unsqueeze(1).expand(-1, int(x.size(1) / len(codes)), -1)
+            for code in codes
+        ]
         code_exp = torch.cat(tmp, dim=1)
 
         encoder_outputs = torch.cat((code_exp, c_org.unsqueeze(1).expand(-1, x.size(1), -1)), dim=-1)
@@ -551,18 +545,28 @@ class Generator(nn.Module):
             loss_dict_discriminator['dis'], loss_dict_discriminator['gen'] = loss_dis.data.item(), loss_gen.data.item()
 
 
-        if not self.multigpu:
-            y_hat = self.vocoder(prev,
-                                self.vocoder.pad_tensor(mel_outputs_postnet, hparams.voc_pad).transpose(1, 2))
-        else:
-            y_hat = self.vocoder(prev,self.vocoder.module.pad_tensor(mel_outputs_postnet, hparams.voc_pad).transpose(1, 2))
+        y_hat = (
+            self.vocoder(
+                prev,
+                self.vocoder.module.pad_tensor(
+                    mel_outputs_postnet, hparams.voc_pad
+                ).transpose(1, 2),
+            )
+            if self.multigpu
+            else self.vocoder(
+                prev,
+                self.vocoder.pad_tensor(
+                    mel_outputs_postnet, hparams.voc_pad
+                ).transpose(1, 2),
+            )
+        )
         y_hat = y_hat.transpose(1, 2).unsqueeze(-1)
         # assert (0 <= wav < 2 ** 9).all()
         loss_vocoder = self.vocoder_loss_func(y_hat, wav.unsqueeze(-1).to(device))
         self.opt_vocoder.zero_grad()
 
         Loss = loss_recon + loss_recon0 + loss_content + \
-               self.lambda_gan * loss_gen + self.lambda_wavenet * loss_vocoder
+                   self.lambda_gan * loss_gen + self.lambda_wavenet * loss_vocoder
         loss_dict['total'] = Loss.data.item()
         self.opt_encoder.zero_grad()
         self.opt_decoder.zero_grad()
@@ -633,9 +637,9 @@ class VideoAudioGenerator(nn.Module):
     
     def optimize_parameters_video(self, dataloader, epochs, device, display_freq=10, save_freq=1000, save_dir="./",
                             experimentName="Train", initial_niter=0, load_model=None):
-        writer = SummaryWriter(log_dir="logs/" + experimentName)
+        writer = SummaryWriter(log_dir=f"logs/{experimentName}")
         if load_model is not None:
-            print("Loading from %s..." % load_model)
+            print(f"Loading from {load_model}...")
             # self.load_state_dict(torch.load(load_model))
             d = torch.load(load_model)
             newdict = d.copy()
@@ -649,9 +653,9 @@ class VideoAudioGenerator(nn.Module):
                     newkey = newkey.replace('.', '.module.', 1)
                 if newkey not in self.state_dict():
                     newdict.pop(newkey)
-            print("Load " + str(len(newdict)) + " parameters!")
+            print(f"Load {len(newdict)} parameters!")
             self.load_state_dict(newdict, strict=False)
-            print("AutoVC Model Loaded") 
+            print("AutoVC Model Loaded")
         niter = initial_niter
         for epoch in range(epochs):
             self.train()
@@ -660,10 +664,11 @@ class VideoAudioGenerator(nn.Module):
                 speaker, mel, prev, wav, video, video_large = data
                 speaker, mel, prev, wav, video, video_large = speaker.to(device), mel.to(device), prev.to(device), wav.to(device), video.to(device), video_large.to(device)
                 codes, code_unsample = self.encoder(mel, speaker, return_unsample=True)
-                
-                tmp = []
-                for code in codes:
-                    tmp.append(code.unsqueeze(1).expand(-1, int(mel.size(1) / len(codes)), -1))
+
+                tmp = [
+                    code.unsqueeze(1).expand(-1, int(mel.size(1) / len(codes)), -1)
+                    for code in codes
+                ]
                 code_exp = torch.cat(tmp, dim=1)
 
                 if not self.use_256:
@@ -679,21 +684,32 @@ class VideoAudioGenerator(nn.Module):
                     loss_content = self.criterionIdt(code_unsample, recons_codes)
                 else:
                     loss_content = torch.from_numpy(np.array(0))
-                
-                if not self.use_256:
-                    loss_video = self.criterionIdt(v_stage1, video) + self.criterionIdt(v_stage2, video_large)
-                else:
-                    loss_video = self.criterionIdt(v_stage2, video_large)
-                
+
+                loss_video = (
+                    self.criterionIdt(v_stage2, video_large)
+                    if self.use_256
+                    else self.criterionIdt(v_stage1, video)
+                    + self.criterionIdt(v_stage2, video_large)
+                )
                 loss_recon = self.criterionIdt(mel, mel_outputs)
                 loss_recon0 = self.criterionIdt(mel, mel_outputs_postnet)
                 loss_vocoder = 0
 
-                if not self.multigpu:
-                    y_hat = self.vocoder(prev,
-                                    self.vocoder.pad_tensor(mel_outputs_postnet, hparams.voc_pad).transpose(1, 2))
-                else:
-                    y_hat = self.vocoder(prev,self.vocoder.module.pad_tensor(mel_outputs_postnet, hparams.voc_pad).transpose(1, 2))
+                y_hat = (
+                    self.vocoder(
+                        prev,
+                        self.vocoder.module.pad_tensor(
+                            mel_outputs_postnet, hparams.voc_pad
+                        ).transpose(1, 2),
+                    )
+                    if self.multigpu
+                    else self.vocoder(
+                        prev,
+                        self.vocoder.pad_tensor(
+                            mel_outputs_postnet, hparams.voc_pad
+                        ).transpose(1, 2),
+                    )
+                )
                 y_hat = y_hat.transpose(1, 2).unsqueeze(-1)
                 # assert (0 <= wav < 2 ** 9).all()
                 loss_vocoder = self.vocoder_loss_func(y_hat, wav.unsqueeze(-1).to(device))
@@ -722,8 +738,10 @@ class VideoAudioGenerator(nn.Module):
                 if niter % save_freq == 0:
                     torch.cuda.empty_cache()  # Prevent Out of Memory
                     print("Saving and Testing...", end='\t')
-                    torch.save(self.state_dict(), save_dir + '/Epoch' + str(epoch).zfill(3) + '_Iter'
-                               + str(niter).zfill(8) + ".pkl")
+                    torch.save(
+                        self.state_dict(),
+                        f'{save_dir}/Epoch{str(epoch).zfill(3)}_Iter{str(niter).zfill(8)}.pkl',
+                    )
                     # self.load_state_dict(torch.load('params.pkl'))
                     self.test_audiovideo(device, writer, niter)
                     print("Done")
@@ -733,14 +751,15 @@ class VideoAudioGenerator(nn.Module):
 
     def generate(self, mel, speaker, device='cuda:0'):
         mel, speaker = mel.to(device), speaker.to(device)
-        if not self.multigpu:
-            codes, code_unsample = self.encoder(mel, speaker, return_unsample=True)
-        else:
-            codes, code_unsample = self.encoder.module(mel, speaker, return_unsample=True)
-                
-        tmp = []
-        for code in codes:
-            tmp.append(code.unsqueeze(1).expand(-1, int(mel.size(1) / len(codes)), -1))
+        codes, code_unsample = (
+            self.encoder.module(mel, speaker, return_unsample=True)
+            if self.multigpu
+            else self.encoder(mel, speaker, return_unsample=True)
+        )
+        tmp = [
+            code.unsqueeze(1).expand(-1, int(mel.size(1) / len(codes)), -1)
+            for code in codes
+        ]
         code_exp = torch.cat(tmp, dim=1)
 
         if not self.multigpu:
@@ -759,9 +778,9 @@ class VideoAudioGenerator(nn.Module):
                 v_stage1 = v_stage2
             mel_outputs = self.decoder.module(code_exp)
             mel_outputs_postnet = self.postnet.module(mel_outputs.transpose(2, 1))
-        
+
         mel_outputs_postnet = mel_outputs + mel_outputs_postnet.transpose(2, 1)
-        
+
         return mel_outputs_postnet, v_stage1, v_stage2
     
     def test_video(self, device):
@@ -779,11 +798,9 @@ class VideoAudioGenerator(nn.Module):
             v_mid, v_hat = self.video_decoder.module(code_exp, train=True)
 
         reader = imageio.get_reader("/mnt/lustre/dengkangle/cmu/datasets/video/obama_test.mp4", 'ffmpeg', fps=20)
-        frames = []
-        for i, im in enumerate(reader):
-            frames.append(np.array(im).transpose(2, 0, 1))
+        frames = [np.array(im).transpose(2, 0, 1) for im in reader]
         frames = (np.array(frames) / 255 - 0.5) / 0.5
-        return frames, v_mid[0:1], v_hat[0:1]
+        return frames, v_mid[:1], v_hat[:1]
 
     def test_audiovideo(self, device, writer, niter):
         source_path = self.test_path
@@ -798,13 +815,13 @@ class VideoAudioGenerator(nn.Module):
         mel_spec = mel_basis80.dot(linear_spec)
         mel_db = 20 * np.log10(mel_spec)
         source_spec = np.clip((mel_db + 120) / 125, 0, 1)
-        
+
         source_embed = torch.from_numpy(np.array([0, 1])).float().unsqueeze(0)
         source_wav = wav
 
         source_spec = torch.Tensor(pad_seq(source_spec.T, hparams.freq)).unsqueeze(0)
         # print(source_spec.shape)
-        
+
         with torch.no_grad():
             generated_spec, v_mid, v_hat = self.generate(source_spec, source_embed ,device)
 
@@ -812,13 +829,31 @@ class VideoAudioGenerator(nn.Module):
 
         print("Generating Wavfile...")
         with torch.no_grad():
-            if not self.multigpu:
-                generated_wav = inv_preemphasis(self.vocoder.generate(generated_spec.to(device).transpose(2, 1), False, None, None, mu_law=True), hparams.preemphasis, hparams.preemphasize)
-            
-            else:
-                generated_wav = inv_preemphasis(self.vocoder.module.generate(generated_spec.to(device).transpose(2, 1), False, None, None, mu_law=True), hparams.preemphasis, hparams.preemphasize)
-
-
+            generated_wav = (
+                inv_preemphasis(
+                    self.vocoder.module.generate(
+                        generated_spec.to(device).transpose(2, 1),
+                        False,
+                        None,
+                        None,
+                        mu_law=True,
+                    ),
+                    hparams.preemphasis,
+                    hparams.preemphasize,
+                )
+                if self.multigpu
+                else inv_preemphasis(
+                    self.vocoder.generate(
+                        generated_spec.to(device).transpose(2, 1),
+                        False,
+                        None,
+                        None,
+                        mu_law=True,
+                    ),
+                    hparams.preemphasis,
+                    hparams.preemphasize,
+                )
+            )
         writer.add_video('generated', (v_hat.numpy()+1)/2, global_step=niter)
         writer.add_video('mid', (v_mid.numpy()+1)/2, global_step=niter)
         writer.add_audio('ground_truth', source_wav, niter, sample_rate=hparams.sample_rate)

@@ -12,15 +12,12 @@ import torch.nn as nn
 
 
 def mkdir(path):
-    folder = os.path.exists(path)
-
-    if not folder:
-        os.makedirs(path)
-        print("---  Creating %s...  ---" % path)
-        print("---  OK  ---")
-
+    if folder := os.path.exists(path):
+        print(f"---  {path} already exists!  ---")
     else:
-        print("---  %s already exists!  ---" % path)
+        os.makedirs(path)
+        print(f"---  Creating {path}...  ---")
+        print("---  OK  ---")
 
 
 
@@ -29,7 +26,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--experiment_name', required=True)
-       
+
     parser.add_argument('--multigpu', dest='multigpu', default=False, action='store_true')
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--epochs', default=600, type=int)
@@ -56,14 +53,10 @@ if __name__ == "__main__":
     else:
         dataloader = DataLoader(SampleVideoDataset(args.video_path, ret_wav=True, use_256=args.use_256), batch_size=args.batch_size, shuffle=True, num_workers=8)
 
-    if args.multigpu:
-        device = 'cuda:0'
-    else:
-        device = args.device
-
+    device = 'cuda:0' if args.multigpu else args.device
     experimentName = args.experiment_name
     save_dir = os.path.join(args.save_dir, experimentName)
-    mkdir("logs/" + experimentName)
+    mkdir(f"logs/{experimentName}")
     mkdir(save_dir)
     G = VideoAudioGenerator(hparams.dim_neck, hparams.speaker_embedding_size, 512, hparams.freq, lr=1e-3, is_train=True,
                   multigpu=args.multigpu,
